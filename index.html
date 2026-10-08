@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Budget Settimanale</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <!-- SETTIMANA -->
+    <section id="view-week" class="view active" aria-label="Settimana">
+      <header class="large-title">
+        <h1>Questa settimana</h1>
+        <p id="week-range" class="muted"></p>
+      </header>
+      <div class="card summary">
+        <div>
+          <div class="label">Totale settimana</div>
+          <div id="total-text" class="summary-main"></div>
+        </div>
+        <div class="right">
+          <div class="label">Fine settimana</div>
+          <div id="days-left" class="summary-main"></div>
+        </div>
+      </div>
+      <div id="cards"></div>
+      <h2 class="section-title">Spese</h2>
+      <div id="expense-list"></div>
+    </section>
+
+    <!-- STORICO -->
+    <section id="view-history" class="view" aria-label="Storico">
+      <header class="large-title"><h1>Storico</h1><p class="muted">Settimane passate</p></header>
+      <div id="history-list"></div>
+    </section>
+
+    <!-- IMPOSTAZIONI -->
+    <section id="view-settings" class="view" aria-label="Impostazioni">
+      <header class="large-title"><h1>Impostazioni</h1></header>
+      <div class="group">
+        <label class="row">
+          <span>Budget Macchina (€/sett.)</span>
+          <input id="set-macchina" type="text" inputmode="decimal" autocomplete="off">
+        </label>
+        <label class="row">
+          <span>Budget Altro (€/sett.)</span>
+          <input id="set-altro" type="text" inputmode="decimal" autocomplete="off">
+        </label>
+        <div class="row">
+          <span>Riporta il residuo</span>
+          <label class="switch"><input id="set-carry" type="checkbox"><span class="slider"></span></label>
+        </div>
+      </div>
+      <p class="footnote">Se attivo, il budget non speso di una settimana si somma alla successiva. Un sforamento non viene riportato. La modifica dei budget vale dalla settimana corrente in poi.</p>
+      <button id="save-budgets" class="btn primary block">Salva budget</button>
+
+      <h2 class="section-title">Dati</h2>
+      <div class="group">
+        <button id="btn-export" class="row btn-row">Esporta dati (JSON)</button>
+        <button id="btn-import" class="row btn-row">Importa da JSON</button>
+        <button id="btn-clear" class="row btn-row danger">Cancella tutto</button>
+      </div>
+      <input id="file-import" type="file" accept=".json,application/json" hidden>
+      <p class="footnote">I dati restano solo su questo iPhone. Esporta un backup ogni tanto.</p>
+    </section>
+  </main>
+
+  <button id="fab" class="fab" aria-label="Aggiungi spesa">+</button>
+
+  <nav class="tabbar">
+    <button data-view="week" class="tab active"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Settimana</span></button>
+    <button data-view="history" class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Storico</span></button>
+    <button data-view="settings" class="tab"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Impostazioni</span></button>
+  </nav>
+
+  <!-- Foglio inserimento/modifica -->
+  <div id="backdrop" class="backdrop" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true">
+    <div class="sheet-head">
+      <button id="sheet-cancel" class="link">Annulla</button>
+      <h3 id="sheet-title">Nuova spesa</h3>
+      <button id="sheet-save" class="link bold">Salva</button>
+    </div>
+    <form id="expense-form" novalidate>
+      <input id="f-amount" class="amount-input" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Importo in euro">
+      <div id="f-error" class="error" hidden></div>
+      <div class="segmented" role="group" aria-label="Categoria">
+        <button type="button" data-cat="macchina" class="seg active">Macchina</button>
+        <button type="button" data-cat="altro" class="seg">Altro</button>
+      </div>
+      <div class="group">
+        <label class="row"><span>Nota</span><input id="f-note" type="text" placeholder="es. benzina, panino" autocomplete="off" maxlength="80"></label>
+        <label class="row"><span>Data</span><input id="f-date" type="date"></label>
+      </div>
+      <button id="f-delete" type="button" class="btn danger block" hidden>Elimina spesa</button>
+      <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
+    </form>
+  </div>
+
+  <!-- Dialogo di conferma -->
+  <div id="dialog-wrap" class="dialog-wrap" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+      <h4 id="dialog-title"></h4>
+      <p id="dialog-msg"></p>
+      <div class="dialog-actions">
+        <button id="dialog-cancel" class="dlg-btn">Annulla</button>
+        <button id="dialog-ok" class="dlg-btn bold"></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
