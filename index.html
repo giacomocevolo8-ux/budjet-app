@@ -20,10 +20,28 @@
   <main id="app">
     <!-- SETTIMANA -->
     <section id="view-week" class="view active" aria-label="Settimana">
-      <header class="large-title">
-        <h1>Questa settimana</h1>
-        <p id="week-range" class="muted"></p>
+      <header class="large-title title-row">
+        <div>
+          <h1>Questa settimana</h1>
+          <p id="week-range" class="muted"></p>
+        </div>
+        <div class="title-actions">
+          <button class="icon-btn" data-goto="history" aria-label="Storico settimane"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+          <button class="icon-btn" data-goto="settings" aria-label="Impostazioni"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
+        </div>
       </header>
+
+      <button id="piggy-card" class="card piggy-card" data-goto="piggy" aria-label="Apri il salvadanaio">
+        <div>
+          <div class="label">Salvadanaio</div>
+          <div id="piggy-balance" class="piggy-main"></div>
+        </div>
+        <div class="right">
+          <div class="label">Questa settimana</div>
+          <div id="piggy-week" class="summary-main"></div>
+        </div>
+      </button>
+
       <div class="card summary">
         <div>
           <div class="label">Totale settimana</div>
@@ -39,14 +57,16 @@
       <div id="expense-list"></div>
     </section>
 
-    <!-- STORICO -->
+    <!-- STORICO (si apre dalla schermata Settimana) -->
     <section id="view-history" class="view" aria-label="Storico">
+      <button class="back" data-goto="week">‹ Settimana</button>
       <header class="large-title"><h1>Storico</h1><p class="muted">Settimane passate</p></header>
       <div id="history-list"></div>
     </section>
 
-    <!-- IMPOSTAZIONI -->
+    <!-- IMPOSTAZIONI (si apre dalla schermata Settimana) -->
     <section id="view-settings" class="view" aria-label="Impostazioni">
+      <button class="back" data-goto="week">‹ Settimana</button>
       <header class="large-title"><h1>Impostazioni</h1></header>
       <div class="group">
         <label class="row">
@@ -57,12 +77,8 @@
           <span>Budget Altro (€/sett.)</span>
           <input id="set-altro" type="text" inputmode="decimal" autocomplete="off">
         </label>
-        <div class="row">
-          <span>Riporta il residuo</span>
-          <label class="switch"><input id="set-carry" type="checkbox"><span class="slider"></span></label>
-        </div>
       </div>
-      <p class="footnote">Se attivo, il budget non speso di una settimana si somma alla successiva. Un sforamento non viene riportato. La modifica dei budget vale dalla settimana corrente in poi.</p>
+      <p class="footnote">La modifica dei budget vale dalla settimana corrente in poi. Ogni domenica sera il residuo della settimana (budget totale − speso) va nel salvadanaio; se hai sforato, la differenza viene sottratta.</p>
       <button id="save-budgets" class="btn primary block">Salva budget</button>
 
       <h2 class="section-title">Dati</h2>
@@ -72,23 +88,82 @@
         <button id="btn-clear" class="row btn-row danger">Cancella tutto</button>
       </div>
       <input id="file-import" type="file" accept=".json,application/json" hidden>
-      <p class="footnote">I dati restano solo su questo iPhone. Esporta un backup ogni tanto.</p>
+      <p class="footnote">I dati restano solo su questo iPhone. Esporta un backup ogni tanto. L'import accetta anche i vecchi file (versione 1).</p>
+
+      <div id="safety-wrap" hidden>
+        <h2 class="section-title">Copie di sicurezza</h2>
+        <div class="group">
+          <button id="btn-export-v1" class="row btn-row" hidden>Esporta copia prima dell'aggiornamento</button>
+          <button id="btn-export-last" class="row btn-row" hidden>Esporta copia prima dell'ultimo import/cancellazione</button>
+          <button id="btn-export-bad" class="row btn-row" hidden>Esporta copia dei dati non leggibili</button>
+        </div>
+        <p class="footnote">Copie automatiche conservate su questo iPhone: una prima del passaggio alla versione 2, una prima di sostituire o cancellare i dati, e (solo se serve) quella di dati che l'app non è riuscita a leggere.</p>
+      </div>
+    </section>
+
+    <!-- SALVADANAIO -->
+    <section id="view-piggy" class="view" aria-label="Salvadanaio">
+      <header class="large-title"><h1>Salvadanaio</h1><p class="muted">Soldi non spesi, settimana dopo settimana</p></header>
+      <div class="card piggy-hero">
+        <div class="label">Saldo</div>
+        <div id="pg-balance" class="hero"></div>
+        <div id="pg-info" class="detail"></div>
+      </div>
+      <div class="two-btns">
+        <button id="pg-deposit" class="btn block">＋ Versamento</button>
+        <button id="pg-withdraw" class="btn block">－ Prelievo</button>
+      </div>
+      <h2 class="section-title">Movimenti</h2>
+      <div id="pg-list"></div>
+    </section>
+
+    <!-- RICORRENTI -->
+    <section id="view-recurring" class="view" aria-label="Ricorrenti">
+      <header class="large-title title-row">
+        <div><h1>Ricorrenti</h1><p class="muted">Spese fisse, fuori dal budget settimanale</p></div>
+        <div class="title-actions"><button id="rec-add" class="icon-btn plus" aria-label="Aggiungi spesa ricorrente">+</button></div>
+      </header>
+      <div id="rec-summary"></div>
+      <div id="rec-list"></div>
+    </section>
+
+    <!-- ANNO -->
+    <section id="view-year" class="view" aria-label="Anno">
+      <header class="large-title"><h1>Anno</h1></header>
+      <div class="year-picker">
+        <button id="year-prev" aria-label="Anno precedente">‹</button>
+        <span id="year-label" aria-live="polite"></span>
+        <button id="year-next" aria-label="Anno successivo">›</button>
+      </div>
+      <div id="year-body"></div>
     </section>
   </main>
 
-  <button id="fab" class="fab" aria-label="Aggiungi spesa">+</button>
+  <button id="fab" class="fab" aria-label="Aggiungi">+</button>
 
-  <nav class="tabbar">
+  <nav class="tabbar" aria-label="Sezioni">
     <button data-view="week" class="tab active"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Settimana</span></button>
-    <button data-view="history" class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Storico</span></button>
-    <button data-view="settings" class="tab"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Impostazioni</span></button>
+    <button data-view="piggy" class="tab"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5M5 11.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg><span>Salvadanaio</span></button>
+    <button data-view="recurring" class="tab"><svg viewBox="0 0 24 24"><path d="M17 2.5l3 3-3 3M4 11V9.5a4 4 0 0 1 4-4h12M7 21.5l-3-3 3-3M20 13v1.5a4 4 0 0 1-4 4H4"/></svg><span>Ricorrenti</span></button>
+    <button data-view="year" class="tab"><svg viewBox="0 0 24 24"><path d="M5 20v-8M12 20V4M19 20v-5M3 20h18"/></svg><span>Anno</span></button>
   </nav>
 
-  <!-- Foglio inserimento/modifica -->
   <div id="backdrop" class="backdrop" hidden></div>
-  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true">
+
+  <!-- Scelta: spesa o guadagno -->
+  <div id="sheet-add" class="sheet" role="dialog" aria-modal="true" aria-label="Aggiungi" aria-hidden="true">
+    <div class="sheet-head"><span></span><h3>Aggiungi</h3><span></span></div>
+    <div class="group">
+      <button id="add-expense" class="row btn-row center">Spesa</button>
+      <button id="add-income" class="row btn-row center">Guadagno</button>
+    </div>
+    <div class="group gap-top"><button class="row btn-row center bold" data-close>Annulla</button></div>
+  </div>
+
+  <!-- Foglio spesa -->
+  <div id="sheet-expense" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true">
     <div class="sheet-head">
-      <button id="sheet-cancel" class="link">Annulla</button>
+      <button class="link" data-close>Annulla</button>
       <h3 id="sheet-title">Nuova spesa</h3>
       <button id="sheet-save" class="link bold">Salva</button>
     </div>
@@ -104,6 +179,86 @@
         <label class="row"><span>Data</span><input id="f-date" type="date"></label>
       </div>
       <button id="f-delete" type="button" class="btn danger block" hidden>Elimina spesa</button>
+      <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
+    </form>
+  </div>
+
+  <!-- Foglio guadagno -->
+  <div id="sheet-income" class="sheet" role="dialog" aria-modal="true" aria-labelledby="income-title" aria-hidden="true">
+    <div class="sheet-head">
+      <button class="link" data-close>Annulla</button>
+      <h3 id="income-title">Nuovo guadagno</h3>
+      <button id="income-save" class="link bold">Salva</button>
+    </div>
+    <form id="income-form" novalidate>
+      <input id="i-amount" class="amount-input" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Importo in euro">
+      <div id="i-error" class="error" hidden></div>
+      <div class="group">
+        <label class="row"><span>Fonte</span><select id="i-source"></select></label>
+        <label id="i-newsource-row" class="row" hidden><span>Nome fonte</span><input id="i-newsource" type="text" placeholder="es. Workshop" autocomplete="off" maxlength="30"></label>
+        <label class="row"><span>Data</span><input id="i-date" type="date"></label>
+        <label class="row"><span>Nota</span><input id="i-note" type="text" placeholder="facoltativa" autocomplete="off" maxlength="80"></label>
+        <div class="row">
+          <span>Versa nel salvadanaio</span>
+          <label class="switch"><input id="i-piggy" type="checkbox" aria-label="Versa nel salvadanaio"><span class="slider"></span></label>
+        </div>
+      </div>
+      <button id="i-delete" type="button" class="btn danger block gap-top" hidden>Elimina guadagno</button>
+      <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
+    </form>
+  </div>
+
+  <!-- Foglio movimento salvadanaio -->
+  <div id="sheet-move" class="sheet" role="dialog" aria-modal="true" aria-labelledby="move-title" aria-hidden="true">
+    <div class="sheet-head">
+      <button class="link" data-close>Annulla</button>
+      <h3 id="move-title">Movimento</h3>
+      <button id="move-save" class="link bold">Salva</button>
+    </div>
+    <form id="move-form" novalidate>
+      <input id="m-amount" class="amount-input" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Importo in euro">
+      <div id="m-error" class="error" hidden></div>
+      <div class="segmented" role="group" aria-label="Tipo di movimento">
+        <button type="button" data-kind="deposit" class="seg active">Versamento</button>
+        <button type="button" data-kind="withdraw" class="seg">Prelievo</button>
+      </div>
+      <div class="group">
+        <label class="row"><span>Nota</span><input id="m-note" type="text" placeholder="es. regalo, cena fuori" autocomplete="off" maxlength="80"></label>
+        <label class="row"><span>Data</span><input id="m-date" type="date"></label>
+      </div>
+      <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
+    </form>
+  </div>
+
+  <!-- Foglio spesa ricorrente -->
+  <div id="sheet-rec" class="sheet" role="dialog" aria-modal="true" aria-labelledby="rec-title" aria-hidden="true">
+    <div class="sheet-head">
+      <button class="link" data-close>Annulla</button>
+      <h3 id="rec-title">Nuova ricorrente</h3>
+      <button id="rec-save" class="link bold">Salva</button>
+    </div>
+    <form id="rec-form" novalidate>
+      <input id="r-amount" class="amount-input" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Importo in euro">
+      <div id="r-error" class="error" hidden></div>
+      <div class="segmented" role="group" aria-label="Frequenza">
+        <button type="button" data-freq="monthly" class="seg active">Mensile</button>
+        <button type="button" data-freq="quarterly" class="seg">Trimestrale</button>
+        <button type="button" data-freq="yearly" class="seg">Annuale</button>
+      </div>
+      <div class="group">
+        <label class="row"><span>Nome</span><input id="r-name" type="text" placeholder="es. Abbonamenti" autocomplete="off" maxlength="40"></label>
+        <label class="row"><span>Data di rinnovo</span><input id="r-date" type="date"></label>
+        <div class="row">
+          <span>Attiva</span>
+          <label class="switch"><input id="r-active" type="checkbox" aria-label="Attiva"><span class="slider"></span></label>
+        </div>
+        <div id="r-confirm-row" class="row" hidden>
+          <span>Data da confermare</span>
+          <label class="switch"><input id="r-confirm" type="checkbox" aria-label="Data da confermare"><span class="slider"></span></label>
+        </div>
+      </div>
+      <p class="footnote">Dalla data di rinnovo si calcolano le scadenze successive: lo stesso giorno ogni mese, ogni 3 mesi o ogni anno.</p>
+      <button id="r-delete" type="button" class="btn danger block" hidden>Elimina voce</button>
       <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
     </form>
   </div>
