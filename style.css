@@ -205,6 +205,8 @@ input { font: inherit; font-size: 17px; color: var(--text); }
 
 .piggy-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; text-align: left; background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
 .piggy-card .right { text-align: right; }
+.align-notice { display: block; width: 100%; text-align: left; font-size: 15px; color: var(--text); background: color-mix(in srgb, var(--orange) 16%, var(--card)); }
+.align-notice strong { display: block; margin-bottom: 2px; }
 .piggy-main { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin-top: 2px; }
 .summary-main.pos { color: var(--green); } .summary-main.neg, .piggy-main.neg { color: var(--red); }
 

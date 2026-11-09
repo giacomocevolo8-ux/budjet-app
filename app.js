@@ -1,7 +1,7 @@
 'use strict';
 
 /* ============ Costanti e utilità ============ */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const CATS = [
   { key: 'macchina', label: 'Macchina' },
   { key: 'altro', label: 'Altro' }
@@ -12,9 +12,9 @@ const FREQS = {
   yearly: { label: 'Annuale', months: 12, per: 'all’anno' }
 };
 const DEFAULT_SOURCES = ['Etsy', 'Vendita stampa', 'Altro'];
-const MOVE_LABELS = { initial: 'Saldo iniziale', week: 'Chiusura settimana', adjust: 'Rettifica', manual: 'Manuale', income: 'Guadagno' };
+const MOVE_LABELS = { initial: 'Saldo iniziale', manual: 'Manuale', income: 'Guadagno', align: 'Allineamento' };
+const ARCHIVED_KINDS = ['week', 'adjust']; // chiusure e rettifiche della v2: conservate in piggy.archive, fuori dal saldo
 const MAX_CENTS = 100000000; // 1.000.000 €
-const PIGGY_START = '2026-10-05'; // prima settimana accumulata in automatico (lunedì)
 const INITIAL_MOVE_ID = 'saldo-iniziale';
 const MONTHS_SHORT = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
 const MONTHS_LONG = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
@@ -53,11 +53,6 @@ const todayStr = () => TEST_DATE || toStr(new Date());
 const shortDate = (s) => fromStr(s).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
 const longDate = (s) => fromStr(s).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' });
 const fullDate = (s) => fromStr(s).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
-function weekLabel(w) { // "28 set – 4 ott 2026"
-  const a = fromStr(w), b = fromStr(addDays(w, 6));
-  const left = a.getMonth() === b.getMonth() ? `${a.getDate()}` : `${a.getDate()} ${MONTHS_SHORT[a.getMonth()]}`;
-  return `${left} – ${b.getDate()} ${MONTHS_SHORT[b.getMonth()]} ${b.getFullYear()}`;
-}
 
 // Importo testuale -> centesimi (accetta virgola o punto). null se non valido.
 function parseAmount(text) {
@@ -67,6 +62,19 @@ function parseAmount(text) {
   const cents = (parseInt(int || '0', 10) * 100) + parseInt((frac + '00').slice(0, 2), 10);
   return cents > 0 && cents <= MAX_CENTS ? cents : null;
 }
+// Totale reale per l'allineamento: come sopra, ma accetta anche zero, il segno meno e i punti delle migliaia (8.740,89). null se non valido.
+function parseTotal(text) {
+  let t = String(text).trim().replace(/\s/g, '').replace('€', '').replace('−', '-');
+  const negative = t.startsWith('-');
+  if (negative) t = t.slice(1);
+  if (/^\d{1,3}(\.\d{3})+(,\d{0,2})?$/.test(t)) t = t.replace(/\./g, '');
+  t = t.replace(',', '.');
+  if (!/^\d*\.?\d{0,2}$/.test(t) || t === '' || t === '.') return null;
+  const [int, frac = ''] = t.split('.');
+  const cents = (parseInt(int || '0', 10) * 100) + parseInt((frac + '00').slice(0, 2), 10);
+  if (cents > MAX_CENTS) return null;
+  return negative && cents !== 0 ? -cents : cents;
+}
 const centsToInput = (c) => (c / 100).toFixed(2).replace('.', ',');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const isFreq = (f) => Object.prototype.hasOwnProperty.call(FREQS, f);
@@ -75,6 +83,7 @@ const isFreq = (f) => Object.prototype.hasOwnProperty.call(FREQS, f);
 const REAL_KEY = 'budget-settimanale';
 const STORAGE_KEY = TEST_DATE ? 'budget-settimanale-test' : REAL_KEY;
 const BACKUP_V1_KEY = 'budget-settimanale-backup-v1';                 // copia dei dati prima della migrazione 1 → 2
+const BACKUP_V2_KEY = 'budget-settimanale-backup-v2';                 // copia dei dati prima della migrazione 2 → 3
 const BACKUP_LAST_KEY = TEST_DATE ? 'budget-settimanale-backup-ultimo-test' : 'budget-settimanale-backup-ultimo'; // prima di import/cancellazione
 const CORRUPT_KEY = 'budget-settimanale-illeggibile';                  // dati non leggibili, conservati intatti
 const LAST_CAT_KEY = 'budget-last-cat';
@@ -96,16 +105,16 @@ const v2Additions = () => ({
   recurring: seedRecurring(),
   incomes: [],
   sources: DEFAULT_SOURCES.slice(),
-  piggy: { trackFrom: PIGGY_START, processed: {}, movements: [initialMovement()] }
+  piggy: { movements: [initialMovement()], archive: [], alignedAt: null, needsAlign: false }
 });
 
-// Dati completamente vuoti (usato da "Cancella tutto": l'accumulo riparte dalla settimana corrente)
+// Dati completamente vuoti (usato da "Cancella tutto")
 function blankData() {
   return {
     version: SCHEMA_VERSION,
     settings: { budgets: [{ from: '0000-00-00', macchina: 2000, altro: 2000 }] },
     expenses: [], incomes: [], sources: DEFAULT_SOURCES.slice(), recurring: [],
-    piggy: { trackFrom: mondayOf(todayStr()), processed: {}, movements: [] }
+    piggy: { movements: [], archive: [], alignedAt: null, needsAlign: false }
   };
 }
 // Dati di una nuova installazione: vuoti + valori iniziali (ricorrenti e saldo iniziale del salvadanaio)
@@ -119,8 +128,15 @@ function migrate(raw) {
   if (raw.version > SCHEMA_VERSION) throw new Error('Dati creati da una versione più recente');
   let src = raw;
   // 1 → 2: spese e impostazioni restano identiche; si aggiungono ricorrenti, salvadanaio, guadagni.
-  // (L'interruttore "Riporta il residuo" non esiste più: il residuo ora finisce nel salvadanaio.)
   if (src.version === 1) src = { ...src, ...v2Additions(), version: 2 };
+  // 2 → 3: il salvadanaio è il totale reale. Chiusure e rettifiche escono dal saldo e restano in archivio;
+  // il saldo va riallineato (needsAlign fa comparire l'avviso finché non lo si fa).
+  if (src.version === 2) {
+    const p = src.piggy;
+    if (!p || typeof p !== 'object' || !Array.isArray(p.movements)) throw new Error('Dati del salvadanaio mancanti');
+    const archived = (m) => !!m && ARCHIVED_KINDS.includes(m.kind);
+    src = { ...src, version: 3, piggy: { movements: p.movements.filter((m) => !archived(m)), archive: p.movements.filter(archived), alignedAt: null, needsAlign: true } };
+  }
   return normalize(src);
 }
 
@@ -168,32 +184,32 @@ function normalize(raw) {
 
   const p = raw.piggy;
   if (!p || typeof p !== 'object' || !Array.isArray(p.movements)) throw new Error('Dati del salvadanaio mancanti');
-  const trackFrom = isDateStr(p.trackFrom) && p.trackFrom >= '2000-01-01' ? mondayOf(p.trackFrom) : PIGGY_START;
-  const seen = new Set();
-  const movements = [];
-  p.movements.forEach((m) => {
-    if (!m || typeof m.id !== 'string' || !m.id || !Object.prototype.hasOwnProperty.call(MOVE_LABELS, m.kind) ||
-        !isDateStr(m.date) || !Number.isInteger(m.amount) || m.amount === 0 || Math.abs(m.amount) > MAX_CENTS) {
-      throw new Error('Uno o più movimenti del salvadanaio non sono validi');
-    }
-    if (seen.has(m.id)) return; // un movimento non può comparire due volte
-    seen.add(m.id);
-    const mv = { id: m.id, kind: m.kind, date: m.date, amount: m.amount, reason: String(m.reason || '').slice(0, 120) };
-    if (typeof m.incomeId === 'string' && m.incomeId) mv.incomeId = m.incomeId;
-    movements.push(mv);
-  });
-  const processed = {};
-  if (p.processed && typeof p.processed === 'object') {
-    for (const [k, v] of Object.entries(p.processed)) if (isDateStr(k) && Number.isInteger(v)) processed[k] = v;
-  }
+  const readMoves = (list, validKind) => {
+    const seen = new Set();
+    const out = [];
+    list.forEach((m) => {
+      if (!m || typeof m.id !== 'string' || !m.id || !validKind(m.kind) ||
+          !isDateStr(m.date) || !Number.isInteger(m.amount) || m.amount === 0 || Math.abs(m.amount) > MAX_CENTS) {
+        throw new Error('Uno o più movimenti del salvadanaio non sono validi');
+      }
+      if (seen.has(m.id)) return; // un movimento non può comparire due volte
+      seen.add(m.id);
+      const mv = { id: m.id, kind: m.kind, date: m.date, amount: m.amount, reason: String(m.reason || '').slice(0, 120) };
+      if (typeof m.incomeId === 'string' && m.incomeId) mv.incomeId = m.incomeId;
+      out.push(mv);
+    });
+    return out;
+  };
+  const movements = readMoves(p.movements, (k) => Object.prototype.hasOwnProperty.call(MOVE_LABELS, k));
+  const archive = readMoves(Array.isArray(p.archive) ? p.archive : [], (k) => ARCHIVED_KINDS.includes(k));
 
-  return { version: SCHEMA_VERSION, settings: { budgets }, expenses, incomes, sources, recurring, piggy: { trackFrom, processed, movements } };
+  return { version: SCHEMA_VERSION, settings: { budgets }, expenses, incomes, sources, recurring,
+    piggy: { movements, archive, alignedAt: isDateStr(p.alignedAt) ? p.alignedAt : null, needsAlign: !!p.needsAlign } };
 }
 
 let storageOk = true;
 let startupNotice = null;
 let migratedAtLoad = false;
-let loadFailed = false; // dati illeggibili: niente salvataggi automatici finché l'utente non fa qualcosa
 function load() {
   let txt = safeGet(STORAGE_KEY);
   if (!txt && TEST_DATE) txt = safeGet(REAL_KEY); // modalità test: parte da una copia (i dati veri restano intatti)
@@ -201,21 +217,24 @@ function load() {
   try {
     const parsed = JSON.parse(txt);
     const old = !!parsed && Number.isInteger(parsed.version) && parsed.version < SCHEMA_VERSION;
-    // Prima di migrare: copia di sicurezza dei dati vecchi, in una chiave a parte
-    if (old && !TEST_DATE && safeGet(BACKUP_V1_KEY) === null && !safeSet(BACKUP_V1_KEY, txt)) startupNotice = 'Attenzione: copia di sicurezza non riuscita';
+    // Prima di migrare: copia di sicurezza dei dati vecchi, una chiave per ogni versione
+    let backupOk = true;
+    if (old && !TEST_DATE) {
+      const key = parsed.version === 2 ? BACKUP_V2_KEY : BACKUP_V1_KEY;
+      if (safeGet(key) === null && !safeSet(key, txt)) { backupOk = false; startupNotice = 'Attenzione: copia di sicurezza non riuscita'; }
+    }
     const migrated = migrate(parsed);
-    migratedAtLoad = old; // solo se la migrazione è riuscita: si riscrive lo storage con il formato nuovo
+    migratedAtLoad = old && backupOk; // migrazione riuscita e copia al sicuro: si riscrive lo storage con il formato nuovo
     return migrated;
   } catch (err) {
     console.warn('Dati non leggibili', err);
     if (!TEST_DATE) safeSet(CORRUPT_KEY, txt); // il testo originale resta salvato, non si perde nulla
     startupNotice = 'Dati non leggibili: ne ho conservato una copia';
-    loadFailed = true;
     return seededData();
   }
 }
 function save() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); storageOk = true; loadFailed = false; return true; }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); storageOk = true; return true; }
   catch (err) { storageOk = false; toast('Impossibile salvare i dati!'); return false; }
 }
 let data = load();
@@ -251,35 +270,10 @@ function statusOf(remaining, budget) {
 }
 
 /* ============ Calcoli: salvadanaio ============ */
-const piggyBalance = () => data.piggy.movements.reduce((t, m) => t + m.amount, 0);
-
-// Chiude tutte le settimane concluse (lunedì → domenica 23:59) non ancora processate, una per una.
-// Ogni settimana è registrata in piggy.processed: non può essere contata due volte.
-// Se una settimana già chiusa cambia (spesa aggiunta/modificata/eliminata a posteriori), registra una rettifica.
-function processPiggy() {
-  const p = data.piggy, cur = mondayOf(todayStr());
-  let changed = false;
-  for (let w = p.trackFrom; w < cur; w = addDays(w, 7)) {
-    const net = weekStats(w).net;
-    let done = p.processed[w];
-    if (done === undefined) {
-      const existing = p.movements.find((m) => m.id === 'w-' + w);
-      if (existing) { done = existing.amount; p.processed[w] = done; changed = true; }
-    }
-    if (done === undefined) {
-      if (net !== 0) {
-        p.movements.push({ id: 'w-' + w, kind: 'week', date: addDays(w, 6), amount: net, reason: `${net > 0 ? 'Residuo' : 'Sforamento'} settimana ${weekLabel(w)}` });
-      }
-      p.processed[w] = net;
-      changed = true;
-    } else if (done !== net) {
-      p.movements.push({ id: uid(), kind: 'adjust', date: todayStr(), amount: net - done, reason: `Rettifica settimana ${weekLabel(w)}` });
-      p.processed[w] = net;
-      changed = true;
-    }
-  }
-  return changed;
-}
+// Il salvadanaio è il totale reale dei soldi: movimenti meno tutte le spese. Il budget settimanale è solo un limite.
+const movesTotal = () => data.piggy.movements.reduce((t, m) => t + m.amount, 0);
+const expensesTotal = () => data.expenses.reduce((t, e) => t + e.amount, 0);
+const piggyBalance = () => movesTotal() - expensesTotal();
 
 /* ============ Calcoli: ricorrenti ============ */
 const yearlyCents = (r) => r.amount * (12 / FREQS[r.freq].months); // costo annuo (interi: ×12, ×4, ×1)
@@ -371,8 +365,9 @@ function renderWeek() {
   const bal = piggyBalance();
   $('piggy-balance').textContent = fmtEur(bal);
   $('piggy-balance').className = 'piggy-main' + (bal < 0 ? ' neg' : '');
-  $('piggy-week').textContent = ws < data.piggy.trackFrom ? '—' : fmtSigned(stats.net);
-  $('piggy-week').className = 'summary-main' + (ws >= data.piggy.trackFrom && stats.net < 0 ? ' neg' : stats.net > 0 && ws >= data.piggy.trackFrom ? ' pos' : '');
+  $('piggy-week').textContent = fmtEur(stats.net);
+  $('piggy-week').className = 'summary-main' + (stats.net < 0 ? ' neg' : stats.net > 0 ? ' pos' : '');
+  $('week-align-notice').hidden = !data.piggy.needsAlign;
 
   $('cards').innerHTML = stats.cats.map((c) => {
     const st = statusOf(c.remaining, c.budget);
@@ -414,11 +409,10 @@ function renderHistory(currentWs) {
     const st = weekStats(w);
     const ok = st.cats.every((c) => c.remaining >= 0);
     const exps = data.expenses.filter((e) => e.date >= w && e.date <= addDays(w, 6)).sort((a, b) => a.date.localeCompare(b.date));
-    const inPiggy = data.piggy.processed[w];
     return `<details class="hist-week"><summary>
       <div class="hist-top"><span>${shortDate(w)} – ${shortDate(addDays(w, 6))}</span><span class="badge ${ok ? 'ok' : 'ko'}">${ok ? 'Rispettato' : 'Sforato'}</span></div>
       ${st.cats.map((c) => `<div class="hist-cat"><span>${c.label}</span><span class="${c.remaining < 0 ? 'ko' : ''}">${fmtEur(c.spent)} / ${fmtEur(c.budget)}</span></div>`).join('')}
-      ${inPiggy !== undefined ? `<div class="hist-cat"><span>Nel salvadanaio</span><span class="${inPiggy < 0 ? 'ko' : 'ok'}">${fmtSigned(inPiggy)}</span></div>` : ''}
+      <div class="hist-cat"><span>Resto del budget</span><span class="${st.net < 0 ? 'ko' : 'ok'}">${fmtSigned(st.net)}</span></div>
       </summary>
       ${exps.length ? `<div class="hist-exp">${exps.map((e) => `<div><span>${shortDate(e.date)} · ${CATS.find((c) => c.key === e.cat).label}${e.note ? ' · ' + esc(e.note) : ''}</span><span>${fmtEur(e.amount)}</span></div>`).join('')}</div>` : ''}
     </details>`;
@@ -432,15 +426,10 @@ function renderPiggy() {
   $('pg-balance').textContent = fmtEur(bal);
   $('pg-balance').className = 'hero' + (bal < 0 ? ' neg' : bal > 0 ? ' pos' : '');
 
-  const today = todayStr(), ws = mondayOf(today), p = data.piggy;
-  let info;
-  if (ws < p.trackFrom) {
-    info = `L’accumulo automatico parte dalla settimana del ${fullDate(p.trackFrom)}.`;
-  } else {
-    const net = weekStats(ws).net;
-    info = `Settimana in corso: ${fmtSigned(net)} (provvisorio). Si chiude domenica ${shortDate(addDays(ws, 6))} alle 23:59: se hai risparmiato va nel salvadanaio, se hai sforato viene sottratto.`;
-  }
-  $('pg-info').textContent = info;
+  const p = data.piggy;
+  $('pg-info').textContent = `Movimenti ${fmtEur(movesTotal())} − spese ${fmtEur(expensesTotal())}. Ogni spesa si riflette subito. Il budget settimanale è solo un limite di spesa. Le Ricorrenti non toccano il saldo: se ne occupa l’allineamento.`;
+  $('pg-aligned').textContent = p.alignedAt ? `Ultimo allineamento: ${fullDate(p.alignedAt)}` : 'Mai allineato al saldo reale';
+  $('pg-align-notice').hidden = !p.needsAlign;
 
   const order = new Map(p.movements.map((m, i) => [m.id, i]));
   const list = p.movements.slice().sort((a, b) => b.date.localeCompare(a.date) || order.get(b.id) - order.get(a.id));
@@ -450,7 +439,7 @@ function renderPiggy() {
     return `<div class="row mv-item">
       <div class="main"><div class="note">${esc(m.reason || kind)}</div><div class="date">${fullDate(m.date)} · ${kind}</div></div>
       <span class="amt ${m.amount < 0 ? 'neg' : 'pos'}">${fmtSigned(m.amount)}</span>
-      ${m.kind === 'manual' ? `<button class="del" data-mv="${esc(m.id)}" aria-label="Elimina movimento">🗑</button>` : ''}
+      ${m.kind === 'manual' || m.kind === 'align' ? `<button class="del" data-mv="${esc(m.id)}" aria-label="Elimina movimento">🗑</button>` : ''}
     </div>`;
   }).join('')}</div>${list.length > shown.length ? '<button id="pg-more" class="btn block gap-top">Mostra altri movimenti</button>' : ''}`
     : '<div class="empty">Ancora nessun movimento.</div>';
@@ -595,11 +584,12 @@ function renderSettings() {
   const cur = b.filter((x) => x.from <= mondayOf(todayStr())).pop() || b[0];
   $('set-macchina').value = centsToInput(cur.macchina);
   $('set-altro').value = centsToInput(cur.altro);
-  const has = { v1: safeGet(BACKUP_V1_KEY) !== null, last: safeGet(BACKUP_LAST_KEY) !== null, bad: safeGet(CORRUPT_KEY) !== null };
+  const has = { v1: safeGet(BACKUP_V1_KEY) !== null, v2: safeGet(BACKUP_V2_KEY) !== null, last: safeGet(BACKUP_LAST_KEY) !== null, bad: safeGet(CORRUPT_KEY) !== null };
   $('btn-export-v1').hidden = !has.v1;
+  $('btn-export-v2').hidden = !has.v2;
   $('btn-export-last').hidden = !has.last;
   $('btn-export-bad').hidden = !has.bad;
-  $('safety-wrap').hidden = !(has.v1 || has.last || has.bad);
+  $('safety-wrap').hidden = !(has.v1 || has.v2 || has.last || has.bad);
 }
 
 function renderAll() {
@@ -652,7 +642,7 @@ function confirmDialog({ title, message, okLabel = 'OK', destructive = false }) 
 }
 
 /* ============ Fogli (sheet) ============ */
-const SHEETS = ['sheet-add', 'sheet-expense', 'sheet-income', 'sheet-move', 'sheet-rec'];
+const SHEETS = ['sheet-add', 'sheet-expense', 'sheet-income', 'sheet-move', 'sheet-align', 'sheet-rec'];
 let openSheetId = null;
 let editingId = null, editingIncomeId = null, editingRecId = null;
 
@@ -688,9 +678,6 @@ $('expense-form').querySelectorAll('.seg').forEach((s) => s.addEventListener('cl
 $('move-form').querySelectorAll('.seg').forEach((s) => s.addEventListener('click', () => setMoveKind(s.dataset.kind)));
 $('rec-form').querySelectorAll('.seg').forEach((s) => s.addEventListener('click', () => setRecFreq(s.dataset.freq)));
 
-// Salva i dati dopo una modifica; ricalcola il salvadanaio (chiusure e rettifiche)
-function persist() { processPiggy(); save(); }
-
 /* ---- Spese ---- */
 function openExpenseSheet(id) {
   editingId = null;
@@ -720,7 +707,7 @@ function submitExpense() {
     data.expenses.push({ id: uid(), cat: formCat, amount: cents, note, date });
   }
   safeSet(LAST_CAT_KEY, formCat);
-  persist();
+  save();
   const inCurrent = mondayOf(date) === mondayOf(todayStr());
   closeSheet();
   renderAll();
@@ -733,7 +720,7 @@ async function deleteExpense(id) {
   const ok = await confirmDialog({ title: 'Eliminare la spesa?', message: `${fmtEur(e.amount)}${e.note ? ' · ' + e.note : ''}`, okLabel: 'Elimina', destructive: true });
   if (!ok) return;
   data.expenses = data.expenses.filter((x) => x.id !== id);
-  persist();
+  save();
   if (anySheetOpen()) closeSheet();
   renderAll();
   toast('Spesa eliminata');
@@ -774,7 +761,7 @@ function openIncomeSheet(id) {
   $('i-newsource').value = '';
   $('i-date').value = i ? i.date : todayStr();
   $('i-note').value = i ? i.note : '';
-  $('i-piggy').checked = i ? i.toPiggy : false;
+  $('i-piggy').checked = i ? i.toPiggy : true;
   $('i-delete').hidden = !i;
   $('i-error').hidden = true;
   openSheetEl('sheet-income', 'i-amount');
@@ -811,7 +798,7 @@ function submitIncome() {
   else { inc = { id: uid(), ...fields }; data.incomes.push(inc); }
   syncIncomeMove(inc);
   safeSet(LAST_SOURCE_KEY, source);
-  persist();
+  save();
   closeSheet();
   renderAll();
   toast(inc.toPiggy ? 'Guadagno salvato e versato nel salvadanaio' : 'Guadagno salvato (lo trovi in Anno)');
@@ -828,7 +815,7 @@ async function deleteIncome(id) {
   if (!ok) return;
   data.incomes = data.incomes.filter((x) => x.id !== id);
   data.piggy.movements = data.piggy.movements.filter((m) => m.incomeId !== id);
-  persist();
+  save();
   if (anySheetOpen()) closeSheet();
   renderAll();
   toast('Guadagno eliminato');
@@ -880,21 +867,52 @@ async function submitMove() {
   }
   const note = $('m-note').value.trim().slice(0, 80);
   data.piggy.movements.push({ id: uid(), kind: 'manual', date, amount: withdraw ? -cents : cents, reason: note || (withdraw ? 'Prelievo manuale' : 'Versamento manuale') });
-  persist();
+  save();
   closeSheet();
   renderAll();
   toast(withdraw ? 'Prelievo registrato' : 'Versamento registrato');
 }
 async function deleteMove(id) {
-  const m = data.piggy.movements.find((x) => x.id === id && x.kind === 'manual');
+  const m = data.piggy.movements.find((x) => x.id === id && (x.kind === 'manual' || x.kind === 'align'));
   if (!m) return;
   const ok = await confirmDialog({ title: 'Eliminare il movimento?', message: `${fmtSigned(m.amount)} · ${m.reason}`, okLabel: 'Elimina', destructive: true });
   if (!ok) return;
   data.piggy.movements = data.piggy.movements.filter((x) => x.id !== id);
-  persist();
+  // Tolto l'allineamento più recente: la data torna a quello precedente; se non ce ne sono più, il saldo è di nuovo da allineare.
+  if (m.kind === 'align' && data.piggy.alignedAt === m.date) {
+    const dates = data.piggy.movements.filter((x) => x.kind === 'align').map((x) => x.date).sort();
+    data.piggy.alignedAt = dates.length ? dates[dates.length - 1] : null;
+    if (!data.piggy.alignedAt) data.piggy.needsAlign = true;
+  }
+  save();
   renderAll();
   toast('Movimento eliminato');
 }
+/* ---- Allineamento al saldo reale ---- */
+function openAlignSheet() {
+  $('a-amount').value = '';
+  $('a-current').textContent = fmtEur(piggyBalance());
+  $('a-error').hidden = true;
+  openSheetEl('sheet-align', 'a-amount');
+}
+function submitAlign() {
+  const target = parseTotal($('a-amount').value);
+  if (target === null) return showError('a-error', 'Inserisci il totale reale (es. 1.234,56).', 'a-amount');
+  const diff = target - piggyBalance();
+  if (Math.abs(diff) > MAX_CENTS) return showError('a-error', 'La differenza con il saldo è troppo grande.', 'a-amount');
+  const today = todayStr();
+  if (diff !== 0) data.piggy.movements.push({ id: uid(), kind: 'align', date: today, amount: diff, reason: `Allineamento al saldo reale (${fmtEur(target)})` });
+  data.piggy.alignedAt = today;
+  data.piggy.needsAlign = false;
+  save();
+  closeSheet();
+  renderAll();
+  toast(diff !== 0 ? `Saldo allineato: ${fmtSigned(diff)}` : 'Saldo già allineato: nessun movimento');
+}
+$('pg-align').addEventListener('click', openAlignSheet);
+$('align-save').addEventListener('click', submitAlign);
+$('align-form').addEventListener('submit', (ev) => { ev.preventDefault(); submitAlign(); });
+
 $('pg-deposit').addEventListener('click', () => openMoveSheet('deposit'));
 $('pg-withdraw').addEventListener('click', () => openMoveSheet('withdraw'));
 $('move-save').addEventListener('click', submitMove);
@@ -935,7 +953,7 @@ function submitRec() {
   const fields = { name, amount: cents, freq: recFreq, renewal: date, active: $('r-active').checked, toConfirm: $('r-confirm').checked };
   if (editingRecId) Object.assign(data.recurring.find((x) => x.id === editingRecId), fields);
   else data.recurring.push({ id: uid(), ...fields });
-  persist();
+  save();
   closeSheet();
   renderAll();
   toast('Ricorrente salvata');
@@ -946,7 +964,7 @@ async function deleteRec(id) {
   const ok = await confirmDialog({ title: 'Eliminare la voce?', message: `${r.name} · ${fmtEur(r.amount)} ${FREQS[r.freq].per}`, okLabel: 'Elimina', destructive: true });
   if (!ok) return;
   data.recurring = data.recurring.filter((x) => x.id !== id);
-  persist();
+  save();
   closeSheet();
   renderAll();
   toast('Voce eliminata');
@@ -965,7 +983,7 @@ $('rec-list').addEventListener('change', (ev) => {
   const r = data.recurring.find((x) => x.id === cb.dataset.id);
   if (!r) return;
   r.active = cb.checked;
-  persist();
+  save();
   renderAll();
 });
 
@@ -980,7 +998,7 @@ $('save-budgets').addEventListener('click', () => {
   if (existing) { existing.macchina = m; existing.altro = a; }
   else list.push({ from, macchina: m, altro: a });
   list.sort((x, y) => x.from.localeCompare(y.from));
-  persist(); renderAll(); renderSettings();
+  save(); renderAll(); renderSettings();
   toast('Budget aggiornati');
 });
 
@@ -1003,6 +1021,7 @@ async function exportText(json, name) {
 }
 $('btn-export').addEventListener('click', () => exportText(JSON.stringify(data, null, 2), `budget-backup-${todayStr()}.json`));
 $('btn-export-v1').addEventListener('click', () => { const t = safeGet(BACKUP_V1_KEY); if (t) exportText(t, 'budget-copia-prima-aggiornamento-v1.json'); });
+$('btn-export-v2').addEventListener('click', () => { const t = safeGet(BACKUP_V2_KEY); if (t) exportText(t, 'budget-copia-prima-aggiornamento-v2.json'); });
 $('btn-export-last').addEventListener('click', () => { const t = safeGet(BACKUP_LAST_KEY); if (t) exportText(t, 'budget-copia-prima-ultima-modifica.json'); });
 $('btn-export-bad').addEventListener('click', () => { const t = safeGet(CORRUPT_KEY); if (t) exportText(t, 'budget-dati-non-leggibili.json'); });
 
@@ -1014,19 +1033,19 @@ $('file-import').addEventListener('change', async (ev) => {
   let imported, oldFormat = false;
   try {
     const parsed = JSON.parse(await file.text());
-    oldFormat = !!parsed && parsed.version === 1;
+    oldFormat = !!parsed && parsed.version < SCHEMA_VERSION;
     imported = migrate(parsed);
   } catch (err) { toast('Importazione fallita: ' + err.message); return; }
   const ok = await confirmDialog({
     title: 'Importare il backup?',
     message: `Verranno sostituiti tutti i dati attuali con ${imported.expenses.length} spese, ${imported.incomes.length} guadagni e ${imported.recurring.length} ricorrenti del backup.` +
-      (oldFormat ? ' Il file è del formato precedente: lo aggiorno e il salvadanaio riparte da 20,00 €.' : ''),
+      (oldFormat ? ' Il file è di un formato precedente: lo aggiorno e il saldo del salvadanaio va riallineato al totale reale.' : ''),
     okLabel: 'Importa', destructive: true
   });
   if (!ok) return;
   safeSet(BACKUP_LAST_KEY, JSON.stringify(data)); // copia di sicurezza dei dati che stanno per essere sostituiti
   data = imported;
-  persist(); renderAll(); renderSettings();
+  save(); renderAll(); renderSettings();
   toast('Dati importati');
 });
 
@@ -1042,19 +1061,16 @@ $('btn-clear').addEventListener('click', async () => {
 });
 
 /* ============ Avvio ============ */
-// Chiude le settimane concluse (anche dopo giorni o settimane di assenza) e aggiorna lo schermo.
-// Si riesegue quando l'app torna in primo piano e ogni minuto (passaggio di mezzanotte).
+// Aggiorna lo schermo al cambio di giorno: quando l'app torna in primo piano e ogni minuto (passaggio di mezzanotte).
 let lastDay = null;
 function tick() {
-  const changed = processPiggy();
-  if (changed && !loadFailed) save();
   const day = todayStr();
-  if ((changed || day !== lastDay) && !anySheetOpen()) { lastDay = day; renderAll(); }
+  if (day !== lastDay && !anySheetOpen()) { lastDay = day; renderAll(); }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastDay = null; tick(); } });
 setInterval(tick, 60 * 1000);
 
-{ const changed = processPiggy(); if ((changed || migratedAtLoad) && !loadFailed) save(); }
+if (migratedAtLoad) save();
 lastDay = todayStr();
 renderAll();
 showView('week');

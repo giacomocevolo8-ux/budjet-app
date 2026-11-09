@@ -31,13 +31,18 @@
         </div>
       </header>
 
+      <button id="week-align-notice" class="card align-notice" data-goto="piggy" hidden>
+        <strong>Saldo da allineare</strong>
+        L’app è stata aggiornata: ora il salvadanaio è il totale reale dei tuoi soldi. Tocca qui e allinealo.
+      </button>
+
       <button id="piggy-card" class="card piggy-card" data-goto="piggy" aria-label="Apri il salvadanaio">
         <div>
           <div class="label">Salvadanaio</div>
           <div id="piggy-balance" class="piggy-main"></div>
         </div>
         <div class="right">
-          <div class="label">Questa settimana</div>
+          <div class="label">Resta del budget</div>
           <div id="piggy-week" class="summary-main"></div>
         </div>
       </button>
@@ -78,7 +83,7 @@
           <input id="set-altro" type="text" inputmode="decimal" autocomplete="off">
         </label>
       </div>
-      <p class="footnote">La modifica dei budget vale dalla settimana corrente in poi. Ogni domenica sera il residuo della settimana (budget totale − speso) va nel salvadanaio; se hai sforato, la differenza viene sottratta.</p>
+      <p class="footnote">La modifica dei budget vale dalla settimana corrente in poi. Il budget è solo un limite di spesa: non aggiunge soldi al salvadanaio. Ogni spesa si toglie subito dal saldo.</p>
       <button id="save-budgets" class="btn primary block">Salva budget</button>
 
       <h2 class="section-title">Dati</h2>
@@ -88,31 +93,38 @@
         <button id="btn-clear" class="row btn-row danger">Cancella tutto</button>
       </div>
       <input id="file-import" type="file" accept=".json,application/json" hidden>
-      <p class="footnote">I dati restano solo su questo iPhone. Esporta un backup ogni tanto. L'import accetta anche i vecchi file (versione 1).</p>
+      <p class="footnote">I dati restano solo su questo iPhone. Esporta un backup ogni tanto. L'import accetta anche i vecchi file (versioni 1 e 2).</p>
 
       <div id="safety-wrap" hidden>
         <h2 class="section-title">Copie di sicurezza</h2>
         <div class="group">
-          <button id="btn-export-v1" class="row btn-row" hidden>Esporta copia prima dell'aggiornamento</button>
+          <button id="btn-export-v2" class="row btn-row" hidden>Esporta copia prima dell'aggiornamento alla versione 3</button>
+          <button id="btn-export-v1" class="row btn-row" hidden>Esporta copia prima dell'aggiornamento alla versione 2</button>
           <button id="btn-export-last" class="row btn-row" hidden>Esporta copia prima dell'ultimo import/cancellazione</button>
           <button id="btn-export-bad" class="row btn-row" hidden>Esporta copia dei dati non leggibili</button>
         </div>
-        <p class="footnote">Copie automatiche conservate su questo iPhone: una prima del passaggio alla versione 2, una prima di sostituire o cancellare i dati, e (solo se serve) quella di dati che l'app non è riuscita a leggere.</p>
+        <p class="footnote">Copie automatiche conservate su questo iPhone: una prima di ogni passaggio di versione (2 e 3), una prima di sostituire o cancellare i dati, e (solo se serve) quella di dati che l'app non è riuscita a leggere.</p>
       </div>
     </section>
 
     <!-- SALVADANAIO -->
     <section id="view-piggy" class="view" aria-label="Salvadanaio">
-      <header class="large-title"><h1>Salvadanaio</h1><p class="muted">Soldi non spesi, settimana dopo settimana</p></header>
+      <header class="large-title"><h1>Salvadanaio</h1><p class="muted">Il totale reale dei tuoi soldi</p></header>
+      <div id="pg-align-notice" class="card align-notice" hidden>
+        <strong>Saldo da allineare</strong>
+        Dopo l’aggiornamento il saldo non è più gonfiato dalle chiusure settimanali, ma non è ancora il totale reale. Registra le spese mancanti, poi tocca «Allinea al saldo reale» e scrivi quanto hai davvero.
+      </div>
       <div class="card piggy-hero">
         <div class="label">Saldo</div>
         <div id="pg-balance" class="hero"></div>
         <div id="pg-info" class="detail"></div>
+        <div id="pg-aligned" class="detail due"></div>
       </div>
       <div class="two-btns">
         <button id="pg-deposit" class="btn block">＋ Versamento</button>
         <button id="pg-withdraw" class="btn block">－ Prelievo</button>
       </div>
+      <button id="pg-align" class="btn block">Allinea al saldo reale</button>
       <h2 class="section-title">Movimenti</h2>
       <div id="pg-list"></div>
     </section>
@@ -226,6 +238,21 @@
         <label class="row"><span>Nota</span><input id="m-note" type="text" placeholder="es. regalo, cena fuori" autocomplete="off" maxlength="80"></label>
         <label class="row"><span>Data</span><input id="m-date" type="date"></label>
       </div>
+      <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
+    </form>
+  </div>
+
+  <!-- Foglio allineamento al saldo reale -->
+  <div id="sheet-align" class="sheet" role="dialog" aria-modal="true" aria-labelledby="align-title" aria-hidden="true">
+    <div class="sheet-head">
+      <button class="link" data-close>Annulla</button>
+      <h3 id="align-title">Saldo reale</h3>
+      <button id="align-save" class="link bold">Salva</button>
+    </div>
+    <form id="align-form" novalidate>
+      <input id="a-amount" class="amount-input" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Totale reale in euro">
+      <div id="a-error" class="error" hidden></div>
+      <p class="footnote">Scrivi il totale reale di tutti i tuoi soldi. Saldo attuale nell’app: <span id="a-current"></span>. L’app registra la differenza come movimento, eliminabile. Prima inserisci le spese che mancano: una spesa con data passata aggiunta dopo l’allineamento abbassa il saldo.</p>
       <button type="submit" class="visually-hidden" tabindex="-1">Salva</button>
     </form>
   </div>
